@@ -21,6 +21,8 @@ from clip import clip
 from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
 from datasets.imagenet_templates import IMAGENET_TEMPLATES, IMAGENET_TEMPLATES_SELECT
 
+from utils import calibration_metrics
+
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = False
@@ -50,7 +52,7 @@ CUSTOM_TEMPLATES = {
 def load_clip_to_cpu(cfg):
     backbone_name = cfg.MODEL.BACKBONE.NAME
     url = clip._MODELS[backbone_name]
-    model_path = clip._download(url)
+    model_path = clip._download(url, './clip_weights/')
 
     try:
         # loading JIT archive
@@ -712,11 +714,15 @@ class ADAPTER(TrainerXCostume):
 
         with torch.no_grad():
             output_test = self.model.forward_features(self.features_test.clone().detach().to(self.device))
+            
+        ece, cece = calibration_metrics(output_test, self.labels_test)
 
         loss_summary = {
             "loss": loss.item(),
             "acc_train": compute_accuracy(output, labels)[0].item(),
             "acc_test": compute_accuracy(output_test, self.labels_test)[0].item(),
+            "ece": ece, 
+            "cece": cece
         }
 
         if (self.batch_idx + 1) == self.num_batches:
