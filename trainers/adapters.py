@@ -21,7 +21,7 @@ from clip import clip
 from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
 from datasets.imagenet_templates import IMAGENET_TEMPLATES, IMAGENET_TEMPLATES_SELECT
 
-from utils import calibration_metrics
+from utils import calibration_metrics, reliability_curve_save
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.benchmark = True
@@ -529,6 +529,30 @@ class ADAPTER(TrainerXCostume):
 
         self.scaler = GradScaler() if cfg.TRAINER.ADAPTER.PREC == "amp" else None
 
+
+    def test(self):
+        self.set_model_mode("eval")
+
+        # Feature extraction on test set
+        self.labels_test, output_test, self.features_test = self.extract_features(partition="test")
+        print("Accuracy on test: " +
+              str(round(compute_accuracy(output_test.cuda(), self.labels_test.cuda())[0].item(), 2)))
+        
+        # print (output_test, self.labels_test)
+        
+        ece, cece = calibration_metrics(output_test.cuda(), self.labels_test.cuda())
+        ece, cece = round(100 * ece.item(),2), round(100 * cece.item(),2)
+        print("Calibration on test: ECE, CECE: " + str(ece) + ',' + str(cece))
+        
+        ## save reliability plots
+        output = F.softmax(output_test, dim=-1)
+        conf, preds = torch.max(output, dim=-1)
+        savepath = self.cfg.OUTPUT_DIR + '/rp.png'
+        reliability_curve_save(conf, preds, self.labels_test, "ECE: {}".format(ece), savepath)
+        
+        ## save_logits
+        
+
     def train(self):
         self.set_model_mode("eval")
 
@@ -536,6 +560,12 @@ class ADAPTER(TrainerXCostume):
         self.labels_test, output_test, self.features_test = self.extract_features(partition="test")
         print("Zero-Shot accuracy on test: " +
               str(round(compute_accuracy(output_test.cuda(), self.labels_test.cuda())[0].item(), 2)))
+        
+        # print (output_test, self.labels_test)
+        
+        ece, cece = calibration_metrics(output_test.cuda(), self.labels_test.cuda())
+        print("Zero-Shot calibration on test: ECE, CECE:" + 
+              str(ece.item()) + ',' + str(cece.item()))
 
         # Feature extraction on training set
         self.labels_train, self.logits_zs, self.features_train = self.extract_features(
