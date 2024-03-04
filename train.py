@@ -27,6 +27,8 @@ from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 import trainers.adapters
+import trainers.adapters_zs_norm
+import trainers.adapters_zs_pen
 
 
 def print_args(args, cfg):
@@ -141,6 +143,10 @@ def main(args):
         trainer.load_model(args.model_dir, cfg, epoch=args.load_epoch)
         trainer.test()
         return
+    
+    if args.zs_eval_only:
+        trainer.test('zs')
+        return 
 
     if not args.no_train:
         trainer.train()
@@ -181,6 +187,7 @@ if __name__ == "__main__":
     parser.add_argument("--backbone", type=str, default="RN50", help="name of CNN backbone")
     parser.add_argument("--head", type=str, default="", help="name of head")
     parser.add_argument("--eval-only", action="store_true", help="evaluation only")
+    parser.add_argument("--zs-eval-only", action="store_true", help="zs evaluation only")
     parser.add_argument(
         "--model-dir",
         type=str,

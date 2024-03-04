@@ -360,7 +360,7 @@ class CustomCLIP(nn.Module):
     def forward_zs(self, features):
 
         # Get trained prototype
-        prototypes = self.base_text_features.copy()
+        prototypes = self.adapter.base_text_features ## self.adapter.base_text_features
 
         image_features_norm = features / features.norm(dim=-1, keepdim=True)
         prototypes_norm = prototypes / prototypes.norm(dim=-1, keepdim=True)
@@ -369,8 +369,6 @@ class CustomCLIP(nn.Module):
         logits = image_features_norm @ prototypes_norm.t() * logit_scale
 
         return logits
-
-
 
     def forward_task_residual(self, features):
 
@@ -504,7 +502,7 @@ class TrainerXCostume(SimpleTrainer):
 
 
 @TRAINER_REGISTRY.register()
-class ADAPTER(TrainerXCostume):
+class ADAPTER_ZSNORM(TrainerXCostume):
     """General Adapter
     """
 
@@ -745,9 +743,19 @@ class ADAPTER(TrainerXCostume):
             with autocast():
                 # Cross-entropy loss
                 output = self.model.forward_features(torch.tensor(features).to(self.device))
+                outzs = self.model.forward_zs(torch.tensor(features).to(self.device))
+
+                min_op, max_op = torch.min(output,1)[0].unsqueeze(1), torch.max(output,1)[0].unsqueeze(1)
+                min_zs, max_zs = torch.min(outzs,1)[0].unsqueeze(1), torch.max(outzs,1)[0].unsqueeze(1)
+
+                op_norm = (output - min_op)/ (max_op - min_op)
+                op_norm = op_norm * (max_zs - min_zs) + min_zs
+
                 # Softmax cross-entropy
-                loss_ce = F.cross_entropy(output, labels)
+                loss_ce = F.cross_entropy(op_norm, labels)
+
                 # Constraint to zero-shot (CLAP)
+
                 if self.model.adapter.apply_constraint != "none":
                     loss_constraint = self.model.adapter.zero_shot_constraint()
                     loss = loss_ce + loss_constraint
@@ -760,8 +768,18 @@ class ADAPTER(TrainerXCostume):
         else:
             # Cross-entropy loss
             output = self.model.forward_features(torch.tensor(features).to(self.device))
+
+            outzs = self.model.forward_zs(torch.tensor(features).to(self.device))
+
+            min_op, max_op = torch.min(output,1)[0].unsqueeze(1), torch.max(output,1)[0].unsqueeze(1)
+            min_zs, max_zs = torch.min(outzs,1)[0].unsqueeze(1), torch.max(outzs,1)[0].unsqueeze(1)
+
+            op_norm = (output - min_op)/ (max_op - min_op)
+            op_norm = op_norm * (max_zs - min_zs) + min_zs
+
             # Softmax cross-entropy
-            loss_ce = F.cross_entropy(output, labels)
+            loss_ce = F.cross_entropy(op_norm, labels)
+
             # Constraint to zero-shot (CLAP)
             if self.model.adapter.apply_constraint != "none":
                 loss_constraint = self.model.adapter.zero_shot_constraint()

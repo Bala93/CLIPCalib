@@ -265,7 +265,7 @@ def calibration_metrics(logits, labels):
     
     return ece, cece 
 
-def reliability_curve_save(confs, preds, labels, metric, savepath, num_bins=15):
+def reliability_curve_save(confs, preds, labels, metric, savedir, num_bins=15):
     '''
     Method to draw a reliability plot from a model's predictions and confidences.
     '''
@@ -281,5 +281,11 @@ def reliability_curve_save(confs, preds, labels, metric, savepath, num_bins=15):
     plt.ylabel('Accuracy',fontsize=32)
     plt.xlabel('Confidence',fontsize=32)
     plt.legend(fontsize=32,loc='upper left')
-    plt.savefig(savepath,bbox_inches='tight')
+    plt.savefig(savedir + '/rp.png',bbox_inches='tight')
     # plt.show()
+    
+    
+def save_logits_and_target(logits, targets, savedir):
+    torch.save(logits, savedir + '/logits.pt')
+    torch.save(targets, savedir + '/target.pt')
+    print ('Logits saved successfully') 

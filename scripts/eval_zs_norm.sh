@@ -2,7 +2,7 @@
 
 # custom config
 DATA=/home/ar88770/CLIPCalib/data  
-TRAINER=ADAPTER
+TRAINER=ADAPTER_ZSNORM
 
 DEVICE=$1
 DATASET=$2      # target dataset - i.e. {imagenet, caltech101, oxford_pets, stanford_cars, oxford_flowers, food101,
@@ -13,12 +13,12 @@ INIT=$5         # Method / Linear Probe init - i.e. {RANDOM, ZS, ClipA, TipA, Ti
 CONSTRAINT=$6   # apply class-adaptive constraint in Linear Probing (CLAP) - i.e. {none, l2}
 BACKBONE=$7     # CLIP backbone to sue - i.e. {RN50, RN101, ViT-B/32, ViT-B/16}
 DATASETS=$8     # source dataset 
-FOLDERNAME=$9
+#FOLDERNAME=$9
 
 for SEED in 1 #2 3
 do
-    MODELDIR=output/${DATASETS}/${FOLDERNAME}/${CFG}_${INIT}Init_${CONSTRAINT}Constraint_${SHOTS}shots/seed${SEED}
-    OUTDIR=output/FINAL/${DATASET}/${FOLDERNAME}/${CFG}_${INIT}Init_${CONSTRAINT}Constraint_${SHOTS}shots/seed${SEED}
+    MODELDIR=output/${DATASETS}/${TRAINER}/${CFG}_${INIT}Init_${CONSTRAINT}Constraint_${SHOTS}shots/seed${SEED}
+    OUTDIR=output/FINAL/${DATASET}/${TRAINER}/${CFG}_${INIT}Init_${CONSTRAINT}Constraint_${SHOTS}shots/seed${SEED}
     if [ -d "$OUTDIR" ]; then
         echo "Oops! The results exist at ${OUTDIR} (so skip this job)"
     else
