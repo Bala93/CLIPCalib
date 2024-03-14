@@ -154,7 +154,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=str, default="/home/juliosilva/Documents/LIVIA/natural_image/", help="path to dataset")
+    parser.add_argument("--root", type=str, default="", help="path to dataset")
     parser.add_argument("--output-dir", type=str, default="output/FINAL/debug/imagenet/debug/", help="output directory")
     parser.add_argument(
         "--resume",
