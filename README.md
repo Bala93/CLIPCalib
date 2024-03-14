@@ -19,6 +19,9 @@ We present the basic usage here.
 
 (c) TR -- SaLS:
 - `bash scripts/eval.sh 0 imagenetv2 SGD_lr1e-1_B256_ep300 1 TR none RN50`
+- ```python
+  logits_tr = (logits_tr - min_logits_tr)/ (max_logits_tr - min_logits_tr)
+  logits_tr = logits_tr * (max_logits_zs - min_logits_zs) + min_logits_zs```
 
 ## Acknowledgment
 This repository is mainly based on [CoOp](https://github.com/KaiyangZhou/CoOp) and [TaskRes](https://github.com/geekyutao/TaskRes) code base. We sincerely thank prior authors on this topic for his awesome code base.
