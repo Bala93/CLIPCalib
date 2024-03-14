@@ -19,7 +19,9 @@ We present the basic usage here.
 
 (c) TR -- SaLS:
 - `bash scripts/eval.sh 0 imagenetv2 SGD_lr1e-1_B256_ep300 1 TR none RN50`
-- ```python
+- The logits of the predictions are renormalized using the following snippet. 
+
+  ```python
   logits_tr = (logits_tr - min_logits_tr)/ (max_logits_tr - min_logits_tr)
   logits_tr = logits_tr * (max_logits_zs - min_logits_zs) + min_logits_zs```
 
