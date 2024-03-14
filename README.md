@@ -13,11 +13,14 @@ We present the basic usage here.
 
 (a) TR -- ZS-Norm:
 - `bash scripts/adapt_zs_norm.sh 0 imagenet SGD_lr1e-1_B256_ep300 1 TR none RN50`
+- `bash scripts/eval_zs_norm.sh 0 imagenetv2 SGD_lr1e-1_B256_ep300 1 TR none RN50`
 
 (b) TR -- Penalty:
 - `bash scripts/adapt_zs_pen.sh.sh 0 imagenet SGD_lr1e-1_B256_ep300 1 TR none RN50`
+- `bash scripts/eval_zs_pen.sh.sh 0 imagenetv2 SGD_lr1e-1_B256_ep300 1 TR none RN50`
 
 (c) TR -- SaLS:
+- `bash scripts/adapt.sh 0 imagenet SGD_lr1e-1_B256_ep300 1 TR none RN50`
 - `bash scripts/eval.sh 0 imagenetv2 SGD_lr1e-1_B256_ep300 1 TR none RN50`
 - The logits of the predictions are renormalized using the following snippet. 
 
