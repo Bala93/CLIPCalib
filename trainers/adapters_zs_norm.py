@@ -360,7 +360,7 @@ class CustomCLIP(nn.Module):
     def forward_zs(self, features):
 
         # Get trained prototype
-        prototypes = self.adapter.base_text_features ## self.adapter.base_text_features
+        prototypes = self.adapter.base_text_features
 
         image_features_norm = features / features.norm(dim=-1, keepdim=True)
         prototypes_norm = prototypes / prototypes.norm(dim=-1, keepdim=True)
@@ -369,6 +369,7 @@ class CustomCLIP(nn.Module):
         logits = image_features_norm @ prototypes_norm.t() * logit_scale
 
         return logits
+
 
     def forward_task_residual(self, features):
 
@@ -543,7 +544,7 @@ class ADAPTER_ZSNORM(TrainerXCostume):
         self.scaler = GradScaler() if cfg.TRAINER.ADAPTER.PREC == "amp" else None
 
 
-    def test(self, mode=None):
+    def test(self):
         self.set_model_mode("eval")
 
         # Feature extraction on test set
@@ -557,18 +558,15 @@ class ADAPTER_ZSNORM(TrainerXCostume):
         ece, cece = round(100 * ece.item(),2), round(100 * cece.item(),2)
         print("Calibration on test: ECE, CECE: " + str(ece) + ',' + str(cece))
         
-        if mode is None:
-            output_dir = self.cfg.OUTPUT_DIR
-        else:
-            output_dir = '/'.join(self.cfg.OUTPUT_DIR.split('/')[:-2])
-            
         ## save reliability plots
         output = F.softmax(output_test, dim=-1)
         conf, preds = torch.max(output, dim=-1)
-        reliability_curve_save(conf, preds, self.labels_test, "ECE: {}".format(ece), self.cfg.OUTPUT_DIR)
+        savepath = self.cfg.OUTPUT_DIR + '/rp.png'
+        reliability_curve_save(conf, preds, self.labels_test, "ECE: {}".format(ece), savepath)
         
         ## save_logits
         save_logits_and_target(output_test, self.labels_test, self.cfg.OUTPUT_DIR)
+        
 
     def train(self):
         self.set_model_mode("eval")
@@ -581,18 +579,8 @@ class ADAPTER_ZSNORM(TrainerXCostume):
         # print (output_test, self.labels_test)
         
         ece, cece = calibration_metrics(output_test.cuda(), self.labels_test.cuda())
-        ece, cece = round(100 * ece.item(),2), round(100 * cece.item(),2)
-        print("Calibration on test: ECE, CECE: " + str(ece) + ',' + str(cece))
-        
-        # if False:
-        #     ## save reliability plots
-        #     output = F.softmax(output_test, dim=-1)
-        #     conf, preds = torch.max(output, dim=-1)
-        #     reliability_curve_save(conf, preds, self.labels_test, 
-        #                            "ECE: {}".format(ece), '/'.join(self.cfg.OUTPUT_DIR.split('/')[:-2]))
-            
-        #     ## save_logits
-        #     save_logits_and_target(output_test, self.labels_test, self.cfg.OUTPUT_DIR)
+        print("Zero-Shot calibration on test: ECE, CECE:" + 
+              str(ece.item()) + ',' + str(cece.item()))
 
         # Feature extraction on training set
         self.labels_train, self.logits_zs, self.features_train = self.extract_features(
@@ -743,19 +731,17 @@ class ADAPTER_ZSNORM(TrainerXCostume):
             with autocast():
                 # Cross-entropy loss
                 output = self.model.forward_features(torch.tensor(features).to(self.device))
-                outzs = self.model.forward_zs(torch.tensor(features).to(self.device))
-
+                zs_pred = self.model.forward_zs(torch.tensor(features).to(self.device))
+                
                 min_op, max_op = torch.min(output,1)[0].unsqueeze(1), torch.max(output,1)[0].unsqueeze(1)
-                min_zs, max_zs = torch.min(outzs,1)[0].unsqueeze(1), torch.max(outzs,1)[0].unsqueeze(1)
+                min_zs, max_zs = torch.min(zs_pred,1)[0].unsqueeze(1), torch.max(zs_pred,1)[0].unsqueeze(1)
 
                 op_norm = (output - min_op)/ (max_op - min_op)
                 op_norm = op_norm * (max_zs - min_zs) + min_zs
 
                 # Softmax cross-entropy
                 loss_ce = F.cross_entropy(op_norm, labels)
-
                 # Constraint to zero-shot (CLAP)
-
                 if self.model.adapter.apply_constraint != "none":
                     loss_constraint = self.model.adapter.zero_shot_constraint()
                     loss = loss_ce + loss_constraint
@@ -769,17 +755,16 @@ class ADAPTER_ZSNORM(TrainerXCostume):
             # Cross-entropy loss
             output = self.model.forward_features(torch.tensor(features).to(self.device))
 
-            outzs = self.model.forward_zs(torch.tensor(features).to(self.device))
+            zs_pred = self.model.forward_zs(torch.tensor(features).to(self.device))
 
             min_op, max_op = torch.min(output,1)[0].unsqueeze(1), torch.max(output,1)[0].unsqueeze(1)
-            min_zs, max_zs = torch.min(outzs,1)[0].unsqueeze(1), torch.max(outzs,1)[0].unsqueeze(1)
+            min_zs, max_zs = torch.min(zs_pred,1)[0].unsqueeze(1), torch.max(zs_pred,1)[0].unsqueeze(1)
 
             op_norm = (output - min_op)/ (max_op - min_op)
             op_norm = op_norm * (max_zs - min_zs) + min_zs
 
             # Softmax cross-entropy
             loss_ce = F.cross_entropy(op_norm, labels)
-
             # Constraint to zero-shot (CLAP)
             if self.model.adapter.apply_constraint != "none":
                 loss_constraint = self.model.adapter.zero_shot_constraint()
@@ -792,14 +777,14 @@ class ADAPTER_ZSNORM(TrainerXCostume):
         with torch.no_grad():
             output_test = self.model.forward_features(self.features_test.clone().detach().to(self.device))
             
-        ece, cece = calibration_metrics(output_test, self.labels_test)
+        #ece, cece = calibration_metrics(output_test, self.labels_test)
 
         loss_summary = {
             "loss": loss.item(),
             "acc_train": compute_accuracy(output, labels)[0].item(),
-            "acc_test": compute_accuracy(output_test, self.labels_test)[0].item(),
-            "ece": ece, 
-            "cece": cece
+            "acc_test": compute_accuracy(output_test, self.labels_test)[0].item()
+            #"ece": ece, 
+            #"cece": cece
         }
 
         if (self.batch_idx + 1) == self.num_batches:

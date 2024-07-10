@@ -21,7 +21,7 @@ from clip import clip
 from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
 from datasets.imagenet_templates import IMAGENET_TEMPLATES, IMAGENET_TEMPLATES_SELECT
 
-from utils import calibration_metrics, reliability_curve_save, save_logits_and_target
+from utils import calibration_metrics, reliability_curve_save, save_logits_and_target, LabelSmoothingCrossEntropy, PenaltyEntropy
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.benchmark = True
@@ -357,21 +357,6 @@ class CustomCLIP(nn.Module):
 
         return logits
 
-    def forward_zs(self, features):
-
-        # Get trained prototype
-        prototypes = self.base_text_features.copy()
-
-        image_features_norm = features / features.norm(dim=-1, keepdim=True)
-        prototypes_norm = prototypes / prototypes.norm(dim=-1, keepdim=True)
-
-        logit_scale = self.logit_scale.exp()
-        logits = image_features_norm @ prototypes_norm.t() * logit_scale
-
-        return logits
-
-
-
     def forward_task_residual(self, features):
 
         # Get trained prototype
@@ -538,6 +523,14 @@ class ADAPTER(TrainerXCostume):
         self.model.to(self.device)
         self.model = self.model.float()
         # NOTE: only give adapter to the optimizer
+
+        #loss_type = cfg.TRAINER.ADAPTER.LOSS_FUNC
+        #self.loss_function = nn.CrossEntropyLoss()
+        #if "ls" in loss_type:
+        #    self.loss_function = LabelSmoothingCrossEntropy()
+        #elif "ecp" in loss_type:
+        #    self.loss_function = PenaltyEntropy()
+
         self.optim = build_optimizer(self.model.adapter, cfg.OPTIM)
         self.sched = build_lr_scheduler(self.optim, cfg.OPTIM)
         self.register_model("adapter", self.model.adapter, self.optim, self.sched)
@@ -545,32 +538,48 @@ class ADAPTER(TrainerXCostume):
         self.scaler = GradScaler() if cfg.TRAINER.ADAPTER.PREC == "amp" else None
 
 
-    def test(self, mode=None):
+    def train_test(self, mode=None):
         self.set_model_mode("eval")
 
+        # Feature extraction on test set
+        # Feature extraction on test set
+        self.labels_test, output_test, self.features_test = self.extract_features(partition="train")
+
+        ## save reliability plots
+        output = F.softmax(output_test, dim=-1)
+        conf, preds = torch.max(output, dim=-1)
+
+        ## save_logits
+        save_logits_and_target(output_test, self.labels_test, self.cfg.OUTPUT_DIR,'support')
+
+    def test(self):
+        self.set_model_mode("eval")
+
+        print ("Testing this -----")
         # Feature extraction on test set
         self.labels_test, output_test, self.features_test = self.extract_features(partition="test")
         print("Accuracy on test: " +
               str(round(compute_accuracy(output_test.cuda(), self.labels_test.cuda())[0].item(), 2)))
-        
+
+        #self.labels_train, output_train, self.features_train = self.extract_features(partition="train")
+        #print (self.labels_train.shape, output_train.shape, self.features_train.shape)
+        #print("Zero-Shot accuracy on train: " +
+        #      str(round(compute_accuracy(output_train.cuda(), self.labels_train.cuda())[0].item(), 2)))
         # print (output_test, self.labels_test)
         
         ece, cece = calibration_metrics(output_test.cuda(), self.labels_test.cuda())
         ece, cece = round(100 * ece.item(),2), round(100 * cece.item(),2)
         print("Calibration on test: ECE, CECE: " + str(ece) + ',' + str(cece))
         
-        if mode is None:
-            output_dir = self.cfg.OUTPUT_DIR
-        else:
-            output_dir = '/'.join(self.cfg.OUTPUT_DIR.split('/')[:-2])
-            
         ## save reliability plots
         output = F.softmax(output_test, dim=-1)
         conf, preds = torch.max(output, dim=-1)
-        reliability_curve_save(conf, preds, self.labels_test, "ECE: {}".format(ece), self.cfg.OUTPUT_DIR)
+        savepath = self.cfg.OUTPUT_DIR + '/rp.png'
+        reliability_curve_save(conf, preds, self.labels_test, "ECE: {}".format(ece), savepath)
         
         ## save_logits
         save_logits_and_target(output_test, self.labels_test, self.cfg.OUTPUT_DIR)
+        
 
     def train(self):
         self.set_model_mode("eval")
@@ -579,22 +588,17 @@ class ADAPTER(TrainerXCostume):
         self.labels_test, output_test, self.features_test = self.extract_features(partition="test")
         print("Zero-Shot accuracy on test: " +
               str(round(compute_accuracy(output_test.cuda(), self.labels_test.cuda())[0].item(), 2)))
+
+        self.labels_test, output_test, self.features_test = self.extract_features(partition="test")
+        print("Zero-Shot accuracy on test: " +
+              str(round(compute_accuracy(output_test.cuda(), self.labels_test.cuda())[0].item(), 2)))
+ 
         
         # print (output_test, self.labels_test)
         
         ece, cece = calibration_metrics(output_test.cuda(), self.labels_test.cuda())
-        ece, cece = round(100 * ece.item(),2), round(100 * cece.item(),2)
-        print("Calibration on test: ECE, CECE: " + str(ece) + ',' + str(cece))
-        
-        # if False:
-        #     ## save reliability plots
-        #     output = F.softmax(output_test, dim=-1)
-        #     conf, preds = torch.max(output, dim=-1)
-        #     reliability_curve_save(conf, preds, self.labels_test, 
-        #                            "ECE: {}".format(ece), '/'.join(self.cfg.OUTPUT_DIR.split('/')[:-2]))
-            
-        #     ## save_logits
-        #     save_logits_and_target(output_test, self.labels_test, self.cfg.OUTPUT_DIR)
+        print("Zero-Shot calibration on test: ECE, CECE:" + 
+              str(ece.item()) + ',' + str(cece.item()))
 
         # Feature extraction on training set
         self.labels_train, self.logits_zs, self.features_train = self.extract_features(
@@ -774,14 +778,14 @@ class ADAPTER(TrainerXCostume):
         with torch.no_grad():
             output_test = self.model.forward_features(self.features_test.clone().detach().to(self.device))
             
-        ece, cece = calibration_metrics(output_test, self.labels_test)
+        #ece, cece = calibration_metrics(output_test, self.labels_test)
 
         loss_summary = {
             "loss": loss.item(),
             "acc_train": compute_accuracy(output, labels)[0].item(),
-            "acc_test": compute_accuracy(output_test, self.labels_test)[0].item(),
-            "ece": ece, 
-            "cece": cece
+            "acc_test": compute_accuracy(output_test, self.labels_test)[0].item()
+            #"ece": ece, 
+            #"cece": cece
         }
 
         if (self.batch_idx + 1) == self.num_batches:

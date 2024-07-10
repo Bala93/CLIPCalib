@@ -29,6 +29,10 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 import trainers.adapters
 import trainers.adapters_zs_norm
 import trainers.adapters_zs_pen
+import trainers.adapters_norm
+import trainers.adapters_ls
+import trainers.adapters_ecp
+import trainers.adapters_mbls
 
 
 def print_args(args, cfg):
@@ -94,6 +98,7 @@ def extend_cfg(cfg):
     cfg.TRAINER.ADAPTER.INIT = "ZS"
     cfg.TRAINER.ADAPTER.CONSTRAINT = "l2"  # none, l2
     cfg.TRAINER.ADAPTER.ENHANCED_BASE = "none"  # none, enhanced (to use them you must download enhanced base from TaskRes).
+    #cfg.TRAINER.ADAPTER.LOSS_FUNC = "ce"
     cfg.TRAINER.ADAPTER.PREC = "fp16"
 
     cfg.DATASET.SUBSAMPLE_CLASSES = "all"  # all, base or new
@@ -141,12 +146,14 @@ def main(args):
 
     if args.eval_only:
         trainer.load_model(args.model_dir, cfg, epoch=args.load_epoch)
+        #trainer.train_test()
         trainer.test()
         return
-    
-    if args.zs_eval_only:
-        trainer.test('zs')
-        return 
+
+    if args.eval_logits:
+        trainer.load_model(args.model_dir, cfg, epoch=args.load_epoch)
+        trainer.train_test()
+        return
 
     if not args.no_train:
         trainer.train()
@@ -154,7 +161,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=str, default="", help="path to dataset")
+    parser.add_argument("--root", type=str, default="/home/juliosilva/Documents/LIVIA/natural_image/", help="path to dataset")
     parser.add_argument("--output-dir", type=str, default="output/FINAL/debug/imagenet/debug/", help="output directory")
     parser.add_argument(
         "--resume",
@@ -187,7 +194,7 @@ if __name__ == "__main__":
     parser.add_argument("--backbone", type=str, default="RN50", help="name of CNN backbone")
     parser.add_argument("--head", type=str, default="", help="name of head")
     parser.add_argument("--eval-only", action="store_true", help="evaluation only")
-    parser.add_argument("--zs-eval-only", action="store_true", help="zs evaluation only")
+    parser.add_argument("--eval-logits", action="store_true", help="evaluation only")
     parser.add_argument(
         "--model-dir",
         type=str,

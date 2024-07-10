@@ -360,7 +360,7 @@ class CustomCLIP(nn.Module):
     def forward_zs(self, features):
 
         # Get trained prototype
-        prototypes = self.adapter.base_text_features ## adapter.base_text_features ? 
+        prototypes = self.adapter.base_text_features
 
         image_features_norm = features / features.norm(dim=-1, keepdim=True)
         prototypes_norm = prototypes / prototypes.norm(dim=-1, keepdim=True)
@@ -371,11 +371,11 @@ class CustomCLIP(nn.Module):
         return logits
 
 
-
     def forward_task_residual(self, features):
 
         # Get trained prototype
         prototypes = self.adapter()
+
         # Sum residual features to base zero-shot prototypes
         prototypes = self.adapter.base_text_features + self.adapter.alpha * prototypes
 
@@ -544,7 +544,7 @@ class ADAPTER_ZSPEN(TrainerXCostume):
         self.scaler = GradScaler() if cfg.TRAINER.ADAPTER.PREC == "amp" else None
 
 
-    def test(self, mode=None):
+    def test(self):
         self.set_model_mode("eval")
 
         # Feature extraction on test set
@@ -558,18 +558,15 @@ class ADAPTER_ZSPEN(TrainerXCostume):
         ece, cece = round(100 * ece.item(),2), round(100 * cece.item(),2)
         print("Calibration on test: ECE, CECE: " + str(ece) + ',' + str(cece))
         
-        if mode is None:
-            output_dir = self.cfg.OUTPUT_DIR
-        else:
-            output_dir = '/'.join(self.cfg.OUTPUT_DIR.split('/')[:-2])
-            
         ## save reliability plots
         output = F.softmax(output_test, dim=-1)
         conf, preds = torch.max(output, dim=-1)
-        reliability_curve_save(conf, preds, self.labels_test, "ECE: {}".format(ece), self.cfg.OUTPUT_DIR)
+        savepath = self.cfg.OUTPUT_DIR + '/rp.png'
+        reliability_curve_save(conf, preds, self.labels_test, "ECE: {}".format(ece), savepath)
         
         ## save_logits
         save_logits_and_target(output_test, self.labels_test, self.cfg.OUTPUT_DIR)
+        
 
     def train(self):
         self.set_model_mode("eval")
@@ -582,18 +579,8 @@ class ADAPTER_ZSPEN(TrainerXCostume):
         # print (output_test, self.labels_test)
         
         ece, cece = calibration_metrics(output_test.cuda(), self.labels_test.cuda())
-        ece, cece = round(100 * ece.item(),2), round(100 * cece.item(),2)
-        print("Calibration on test: ECE, CECE: " + str(ece) + ',' + str(cece))
-        
-        # if False:
-        #     ## save reliability plots
-        #     output = F.softmax(output_test, dim=-1)
-        #     conf, preds = torch.max(output, dim=-1)
-        #     reliability_curve_save(conf, preds, self.labels_test, 
-        #                            "ECE: {}".format(ece), '/'.join(self.cfg.OUTPUT_DIR.split('/')[:-2]))
-            
-        #     ## save_logits
-        #     save_logits_and_target(output_test, self.labels_test, self.cfg.OUTPUT_DIR)
+        print("Zero-Shot calibration on test: ECE, CECE:" + 
+              str(ece.item()) + ',' + str(cece.item()))
 
         # Feature extraction on training set
         self.labels_train, self.logits_zs, self.features_train = self.extract_features(
@@ -744,15 +731,17 @@ class ADAPTER_ZSPEN(TrainerXCostume):
             with autocast():
                 # Cross-entropy loss
                 output = self.model.forward_features(torch.tensor(features).to(self.device))
+                zs_pred = self.model.forward_zs(torch.tensor(features).to(self.device))
 
-                zspred = self.model.forward_zs(torch.tensor(features).to(self.device))
+                b, c = zs_pred.shape
 
-                min_zs, max_zs = torch.min(zspred,1)[0].unsqueeze(1), torch.max(zspred,1)[0].unsqueeze(1)
+                min_zs, max_zs = torch.min(zs_pred,1)[0].unsqueeze(1), torch.max(zs_pred,1)[0].unsqueeze(1)
                 constr1 = F.relu(output - max_zs.repeat(1,c)).mean()
                 constr2 = F.relu(min_zs.repeat(1,c) - output).mean()
 
-                # Softmax cross-entropy
+                # softmax cross-entropy
                 loss_ce = F.cross_entropy(output, labels) + 10 * (constr1 + constr2)
+
                 # Constraint to zero-shot (CLAP)
                 if self.model.adapter.apply_constraint != "none":
                     loss_constraint = self.model.adapter.zero_shot_constraint()
@@ -766,17 +755,16 @@ class ADAPTER_ZSPEN(TrainerXCostume):
         else:
             # Cross-entropy loss
             output = self.model.forward_features(torch.tensor(features).to(self.device))
+            zs_pred = self.model.forward_zs(torch.tensor(features).to(self.device))
 
-            zspred = self.model.forward_zs(torch.tensor(features).to(self.device))
-            b, c = zspred.shape
+            b, c = zs_pred.shape
 
-            min_zs, max_zs = torch.min(zspred,1)[0].unsqueeze(1), torch.max(zspred,1)[0].unsqueeze(1)
+            min_zs, max_zs = torch.min(zs_pred,1)[0].unsqueeze(1), torch.max(zs_pred,1)[0].unsqueeze(1)
             constr1 = F.relu(output - max_zs.repeat(1,c)).mean()
             constr2 = F.relu(min_zs.repeat(1,c) - output).mean()
 
-            # Softmax cross-entropy
+            # softmax cross-entropy
             loss_ce = F.cross_entropy(output, labels) + 10 * (constr1 + constr2)
-
             # Constraint to zero-shot (CLAP)
             if self.model.adapter.apply_constraint != "none":
                 loss_constraint = self.model.adapter.zero_shot_constraint()
@@ -789,14 +777,14 @@ class ADAPTER_ZSPEN(TrainerXCostume):
         with torch.no_grad():
             output_test = self.model.forward_features(self.features_test.clone().detach().to(self.device))
             
-        ece, cece = calibration_metrics(output_test, self.labels_test)
+        #ece, cece = calibration_metrics(output_test, self.labels_test)
 
         loss_summary = {
             "loss": loss.item(),
             "acc_train": compute_accuracy(output, labels)[0].item(),
-            "acc_test": compute_accuracy(output_test, self.labels_test)[0].item(),
-            "ece": ece, 
-            "cece": cece
+            "acc_test": compute_accuracy(output_test, self.labels_test)[0].item()
+            #"ece": ece, 
+            #"cece": cece
         }
 
         if (self.batch_idx + 1) == self.num_batches:
