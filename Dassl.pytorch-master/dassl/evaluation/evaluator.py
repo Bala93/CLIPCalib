@@ -3,8 +3,10 @@ import os.path as osp
 from collections import OrderedDict, defaultdict
 import torch
 from sklearn.metrics import f1_score, confusion_matrix
+from .utils import expected_calibration_error
 
 from .build import EVALUATOR_REGISTRY
+from torch.nn import functional as F
 
 
 class EvaluatorBase:
@@ -35,6 +37,9 @@ class Classification(EvaluatorBase):
         self._per_class_res = None
         self._y_true = []
         self._y_pred = []
+        self._y_conf = []
+        self.y_logits = []
+
         if cfg.TEST.PER_CLASS_RESULT:
             assert lab2cname is not None
             self._per_class_res = defaultdict(list)
@@ -44,19 +49,24 @@ class Classification(EvaluatorBase):
         self._total = 0
         self._y_true = []
         self._y_pred = []
+        self._y_conf = []
+        self.y_logits = []
         if self._per_class_res is not None:
             self._per_class_res = defaultdict(list)
 
     def process(self, mo, gt):
         # mo (torch.Tensor): model output [batch, num_classes]
         # gt (torch.LongTensor): ground truth [batch]
-        pred = mo.max(1)[1]
+        self.y_logits.append(mo)
+        mo = F.softmax(mo, 1)
+        sftmx, pred = mo.max(1)
         matches = pred.eq(gt).float()
         self._correct += int(matches.sum().item())
         self._total += gt.shape[0]
 
         self._y_true.extend(gt.data.cpu().numpy().tolist())
         self._y_pred.extend(pred.data.cpu().numpy().tolist())
+        self._y_conf.extend(sftmx.data.cpu().numpy().tolist())
 
         if self._per_class_res is not None:
             for i, label in enumerate(gt):
@@ -65,6 +75,7 @@ class Classification(EvaluatorBase):
                 self._per_class_res[label].append(matches_i)
 
     def evaluate(self):
+        print ("Hi using dassl evaluat")
         results = OrderedDict()
         acc = 100.0 * self._correct / self._total
         err = 100.0 - acc
@@ -75,10 +86,13 @@ class Classification(EvaluatorBase):
             labels=np.unique(self._y_true)
         )
 
+        ece = expected_calibration_error(self._y_conf, self._y_pred, self._y_true) * 100 
+
         # The first value will be returned by trainer.test()
         results["accuracy"] = acc
         results["error_rate"] = err
         results["macro_f1"] = macro_f1
+        results["ece"] = ece 
 
         print(
             "=> result\n"
@@ -86,8 +100,17 @@ class Classification(EvaluatorBase):
             f"* correct: {self._correct:,}\n"
             f"* accuracy: {acc:.1f}%\n"
             f"* error: {err:.1f}%\n"
-            f"* macro_f1: {macro_f1:.1f}%"
+            f"* macro_f1: {macro_f1:.1f}%\n"
+            f"* ece: {ece:.2f}%\n"
         )
+
+        save_path = osp.join(self.cfg.OUTPUT_DIR, "logits.pt")
+        print (save_path)
+        torch.save(torch.cat(self.y_logits), save_path)
+
+        if 'ZeroshotCLIP' in self.cfg.OUTPUT_DIR:  
+            torch.save(self._y_true, save_path.replace('logits','target')) 
+
 
         if self._per_class_res is not None:
             labels = list(self._per_class_res.keys())
