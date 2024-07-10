@@ -29,11 +29,6 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 import trainers.adapters
 import trainers.adapters_zs_norm
 import trainers.adapters_zs_pen
-import trainers.adapters_norm
-import trainers.adapters_ls
-import trainers.adapters_ecp
-import trainers.adapters_mbls
-
 
 def print_args(args, cfg):
     print("***************")
