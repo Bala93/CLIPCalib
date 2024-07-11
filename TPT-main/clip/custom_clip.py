@@ -317,7 +317,7 @@ class ClipTestTimeTuning(nn.Module):
         logit_scale = self.logit_scale.exp()
         logits = logit_scale * image_features @ text_features.t()
 
-        return logits
+        return logits, text_features
 
     def forward(self, input):
         if isinstance(input, Tuple):

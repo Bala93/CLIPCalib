@@ -9,6 +9,19 @@ from enum import Enum
 
 import torch
 import torchvision.transforms as transforms
+from matplotlib import pyplot as plt 
+import math
+
+plt.rcParams.update({'font.size': 20})
+plt.style.use('ggplot')
+
+# Some keys used for the following dictionaries
+COUNT = 'count'
+CONF = 'conf'
+ACC = 'acc'
+BIN_ACC = 'bin_acc'
+BIN_CONF = 'bin_conf'
+
 
 
 def set_random_seed(seed):
@@ -178,3 +191,64 @@ def validate(val_loader, model, criterion, args, output_mask=None):
         progress.display_summary()
 
     return top1.avg
+
+def _bin_initializer(bin_dict, num_bins=10):
+    for i in range(num_bins):
+        bin_dict[i][COUNT] = 0
+        bin_dict[i][CONF] = 0
+        bin_dict[i][ACC] = 0
+        bin_dict[i][BIN_ACC] = 0
+        bin_dict[i][BIN_CONF] = 0
+
+
+def _populate_bins(confs, preds, labels, num_bins=10):
+    bin_dict = {}
+    for i in range(num_bins):
+        bin_dict[i] = {}
+    _bin_initializer(bin_dict, num_bins)
+    num_test_samples = len(confs)
+
+    for i in range(0, num_test_samples):
+        confidence = confs[i]
+        prediction = preds[i]
+        label = labels[i]
+        binn = int(math.ceil(((num_bins * confidence) - 1)))
+        bin_dict[binn][COUNT] = bin_dict[binn][COUNT] + 1
+        bin_dict[binn][CONF] = bin_dict[binn][CONF] + confidence
+        bin_dict[binn][ACC] = bin_dict[binn][ACC] + \
+            (1 if (label == prediction) else 0)
+
+    for binn in range(0, num_bins):
+        if (bin_dict[binn][COUNT] == 0):
+            # bin_dict[binn][BIN_ACC] = 0
+            # bin_dict[binn][BIN_CONF] = 0
+            ## for getting a 45d line.
+            bin_dict[binn][BIN_ACC] = binn / num_bins
+            bin_dict[binn][BIN_CONF] = binn / num_bins
+
+        else:
+            bin_dict[binn][BIN_ACC] = float(
+                bin_dict[binn][ACC]) / bin_dict[binn][COUNT]
+            bin_dict[binn][BIN_CONF] = bin_dict[binn][CONF] / \
+                float(bin_dict[binn][COUNT])
+    return bin_dict
+
+
+def reliability_curve_save(confs, preds, labels, metric, savepath, num_bins=15):
+    '''
+    Method to draw a reliability plot from a model's predictions and confidences.
+    '''
+    bin_dict = _populate_bins(confs, preds, labels, num_bins)
+    bns = [(i / float(num_bins)) for i in range(num_bins)]
+    y = []
+    for i in range(num_bins):
+        y.append(bin_dict[i][BIN_ACC])
+    plt.figure(figsize=(10, 8))  # width:20, height:3
+    plt.plot(bns, bns, color='pink', label='Expected',linewidth=5)
+    plt.plot(bns, y, color='blue', label='Actual',linewidth=5)
+    plt.text(0.9, 0.1, metric, size=50, ha="right", va="bottom",bbox=dict(boxstyle="square",ec=(1., 0.5, 0.5),fc=(1., 0.8, 0.8),))
+    plt.ylabel('Accuracy',fontsize=32)
+    plt.xlabel('Confidence',fontsize=32)
+    plt.legend(fontsize=32,loc='upper left')
+    plt.savefig(savepath,bbox_inches='tight')
+    # plt.show()

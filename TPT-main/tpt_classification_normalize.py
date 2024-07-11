@@ -14,7 +14,7 @@ import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms as transforms
-
+import torch.nn.functional as F
 
 try:
     from torchvision.transforms import InterpolationMode
@@ -33,6 +33,7 @@ from data.fewshot_datasets import fewshot_datasets
 from data.imagenet_variants import thousand_k_to_200, imagenet_a_mask, imagenet_r_mask, imagenet_v_mask
 from utils.metrics import ECELoss, ClasswiseECELoss
 ece_metric, cece_metric = ECELoss(), ClasswiseECELoss()
+
 
 arch_dict = {'RN50':'rn50','ViT-B/16':'vitb16'}
 
@@ -66,14 +67,24 @@ def test_time_tuning(model, inputs, optimizer, scaler, args):
             if args.cocoop:
                 output = model((image_feature, pgen_ctx))
             else:
-                output = model(inputs) 
+                output, _ = model(inputs)
 
             if selected_idx is not None:
                 output = output[selected_idx]
             else:
                 output, selected_idx = select_confident_samples(output, args.selection_p)
 
-            loss = avg_entropy(output)
+            if j == 0:
+                zs_pred = output[0,:]
+                min_logits_zs, max_logits_zs = torch.min(zs_pred), torch.max(zs_pred)
+    
+            
+            min_logits_tpt, max_logits_tpt = torch.min(output,1)[0].unsqueeze(1), torch.max(output,1)[0].unsqueeze(1)
+            
+            output_norm = (output - min_logits_tpt)/ (max_logits_tpt - min_logits_tpt)
+            output_norm = output_norm * (max_logits_zs - min_logits_zs) + min_logits_zs
+            
+            loss = avg_entropy(output_norm)
         
         optimizer.zero_grad()
         # compute gradient and do SGD step
@@ -117,9 +128,6 @@ def main_worker(gpu, args):
             print("Use pre-trained soft prompt (CoOp) as initialization")
             pretrained_ctx = torch.load(args.load)['state_dict']['ctx']
             assert pretrained_ctx.size()[0] == args.n_ctx
-
-            #print (pretrained_ctx.shape, model.prompt_learner.ctx.shape)
-
             with torch.no_grad():
                 model.prompt_learner.ctx.copy_(pretrained_ctx)
                 model.prompt_learner.ctx_init_state = pretrained_ctx
@@ -305,7 +313,7 @@ def test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state,
                 if args.cocoop:
                     output = model((image_feature, pgen_ctx))
                 else:
-                    output = model(image)
+                    output, _ = model(image)
                     
         rlogits[i,:]  = output.cpu()
         # measure accuracy and record loss
@@ -326,16 +334,14 @@ def test_time_adapt_eval(val_loader, model, model_state, optimizer, optim_state,
         if (i+1) % args.print_freq == 0:
             progress.display(i)
 
-        #break
-
     if args.cocoop:
         fname = 'tpt-cocoop'
     elif args.load is None:
         fname = 'tpt'
     else:
         fname = 'tpt-coop'
-
-    torch.save(rlogits,'/home/ar88770/TPT/logits/{}/{}_{}.pt'.format(arch_dict[args.arch],dataset_name,fname))
+        
+    torch.save(rlogits,'/home/ar88770/TPT/logits/{}/{}_{}_norm.pt'.format(arch_dict[args.arch], dataset_name, fname))
     progress.display_summary()
 
     return [top1.avg, ecemeter.avg, cecemeter.avg]
