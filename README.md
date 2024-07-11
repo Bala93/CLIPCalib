@@ -1,4 +1,4 @@
-# Robust Calibration of Large Vision-Language Adapters
+# Robust Calibration of Large Vision-Language Adapters (ECCV 2024)
 
 ## Installation
 This repository requires to install the environment and datasets:
