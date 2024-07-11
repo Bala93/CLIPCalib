@@ -27,6 +27,11 @@ import trainers.coop
 import trainers.cocoop
 import trainers.zsclip
 
+import trainers.coop_zs
+import trainers.coop_constr
+import trainers.cocoop_zs
+import trainers.cocoop_constr
+
 
 def print_args(args, cfg):
     print("***************")
